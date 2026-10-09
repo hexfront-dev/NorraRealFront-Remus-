@@ -1,58 +1,95 @@
-# Handoff — Railroad-link save coverage; latest-5-commits save-test evaluation
+# Handoff — railroad-feature branch: asset 404 + preload self-heal added; perf work outstanding
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
 > open items or partially verified work.
 
-Companion notes: `testnotes.md` (feature/bug detail + pre-existing failures).
+Companion notes: `testnotes.md`.
 
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO`.
-- Token: `H:\Documents\Hexfront-token.txt`. Authenticates as **`hexfront-dev`**.
-- Push target: `origin` = `https://github.com/hexfront-dev/NorraRealFront-Remus-.git`,
-  branch `main`. Other remotes: `norrasoff` = `NorrasOFF/NorraRealFront`,
-  `upstream` = `openfrontio/OpenFrontIO`, `hexfront` = `hexfront-dev/OpenFrontIO`.
-- Push command (do not print the token):
-  ```powershell
-  $tok = (Get-Content -Raw "H:\Documents\Hexfront-token.txt").Trim()
-  $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$tok"))
-  git -C "C:\Users\ai51940\OpenFrontIO" -c http.extraheader="Authorization: Basic $b64" `
-    push origin HEAD:main
-  ```
+- Tokens (all authenticate as **`hexfront-dev`**):
+  - `H:\Documents\Hexfront-token.txt` — write to the fork (`origin`).
+  - `H:\Documents\Norrasoff-token.txt` — **read-only** (cannot push/PR NorrasOFF).
+  - `H:\Documents\Fly.io-token.txt` — Fly deploy token (app `openfrontio`, org
+    “Familjen Jacobsson”). `flyctl` at `C:\Users\ai51940\.fly\bin\flyctl.exe`;
+    set `$env:FLY_API_TOKEN = (Get-Content -Raw ...).Trim()`.
+- Remotes: `origin` = `hexfront-dev/NorraRealFront-Remus-`,
+  `norrasoff` = `NorrasOFF/NorraRealFront`, `upstream` = `openfrontio/OpenFrontIO`,
+  `hexfront` = `hexfront-dev/OpenFrontIO` (no write with either token).
+- This branch **`debug-pr14`** = the railroad feature tip (`647ca65a4`) **plus**
+  the asset/preload fixes below. `origin/main` and `origin/revert-pr-14` are the
+  **revert** (`576389b13`, no railroad feature); `norrasoff/main` = `1d963cf20`
+  (feature, merged). The deployed Fly build was the revert at last check
+  (`coreVersion 95f29ecc…` = `96ce9a417`).
 
-## 2. What changed this session
+## 2. What changed this session (implemented + verified)
 
-- Added `tests/core/executions/RailroadLinkCheckpoint.test.ts`: a fast B2
-  checkpoint round-trip for the informational `UnitType.Railroad` links. It
-  builds two rail-connected factories, runs `RailroadLinkExecution`, captures a
-  checkpoint, restores it, and asserts the player link table + the Railroad unit
-  (incl. `targetUnit`) survive and a 30-tick suffix replays to identical hashes.
-- Documented the determination in `testnotes.md` ("Railroad factory links
-  survive checkpoints").
+Fix for `Failed to fetch dynamically imported module: …/Worker.worker-*.js`
+(“Anslutningsfel!” when hosting a private lobby). Root cause: missing assets were
+served as the HTML app shell at HTTP 200, and the sim worker is a **lazy** chunk
+(since `94f229314`, 2026-06-11) fetched at game start, so a failed fetch became an
+unrecoverable module error. **Not** caused by the railroad feature.
 
-## 3. Save-test evaluation of the latest 5 commits
+1. **Server: 404 for missing assets** — `src/server/Master.ts`. The SPA fallback
+   now returns `404 text/plain` for `req.path` under `/assets/` or `/_assets/`
+   instead of rendering `index.html`. Verified locally: bogus asset paths → 404;
+   `/` → 200 `text/html`.
+2. **Client: self-heal failed lazy imports** — `src/client/PreloadErrorRecovery.ts`
+   (imported first in `src/client/Main.ts`). On Vite’s `vite:preloadError` it
+   `preventDefault()`s and reloads **once** with a cache-busting `_r=<ts>` query;
+   a 15 s `sessionStorage` cooldown (`openfront:preload-error-reload-at`) prevents
+   a reload loop. Verified headless: the event navigates to `…/?_r=<ts>`.
 
-Only `75a0c64a9` (Railroad feature) touches save state: `PlayerCheckpoint.
-railroadLinks`, the `railroad_link` execution kind, a new persistent unit type.
-The other four are docs (`aa09b0fb8`, `911865cdb`) or client-only input/HUD
-changes with no checkpoint/wire impact (`6bb4049ce`, `fc09efa75`).
+`npx tsc --noEmit` clean; prettier/oxlint/eslint clean on touched files.
 
-Conclusion: the exhaustive `EndgameSaveResume` soak (30-min gated, run per the
-instructions in `testnotes.md`) is **not prudent/necessary** for these commits.
-The new state is additive and backward compatible, and the targeted round-trip
-test covers the save path directly. No save regression for games saved after the
-commit.
+Deliberately **not** done (cost): shortening the app-shell cache
+(`stale-while-revalidate`/`stale-if-error` in `RenderHtml.ts`) and keeping a warm
+machine (`min_machines_running=1` in `fly.toml`).
 
-## 4. Verification
+## 3. PERFORMANCE WORK — do before shipping the railroad feature
 
-- `npx vitest run tests/core/executions/RailroadLinkCheckpoint.test.ts` — 2 passed.
-- `npx vitest run tests/core/executions/RailroadLinkExecution.test.ts tests/core/CheckpointRail.test.ts` — 9 passed.
-- `npx tsc --noEmit` clean; `npx prettier --write` on the new test;
-  `npx oxlint` + `npx eslint` on it — clean.
+Files: `src/core/execution/RailroadLinkExecution.ts`,
+`src/core/game/RailNetworkImpl.ts` (`StationManagerImpl.findStation`),
+`src/core/game/PlayerImpl.ts` (`_railroadLinks`).
 
-## 5. Open items / next steps
+1. **O(players × factories² × stations) per tick — the lag.** `tick()` calls
+   `stationManager.findStation(factories[j])` in an inner loop, and
+   `StationManagerImpl.findStation` linearly scans every station
+   (`for (const station of this.stations) if (station.unit === unit) …`).
+   - Resolve factory→station **once per player per tick** (or once per tick),
+     not per pair.
+   - Better: add an O(1) `unitId → TrainStation` index to `StationManagerImpl`
+     (fill in `addStation`, clear in `removeStation`/`restoreStations`).
+   - Early-out for players with `< 2` factories.
+   - Regression guard: a test that counts `findStation` calls (or a perf test).
+2. **Link never reforms after a factory dies.** The drop loop
+   (`RailroadLinkExecution.ts:54-63`) calls `removeLink()` but leaves the pair in
+   `prevConnected`; `nowConnected` is then recomputed, so the pair stays in
+   `prevConnected` and `newPairs` never re-creates it though the factories are
+   still connected. Remove dropped pairs from `prevConnected`, or derive link
+   existence from current connectivity.
+3. **Multi-factory “newest connection wins” churn.** With A,B,C connected the
+   `newPairs` loop creates A:B, deletes it for A:C, deletes that for B:C — one
+   link survives, several units created/deleted in one tick. Assign a stable
+   partner per factory (e.g. lowest-id still-connected) to stop the thrash.
+4. **Delete with an alternate path doesn’t stick.**
+   `DeleteRailroadExecution.cutRailBetween` cuts only the found path; another path
+   can keep the pair connected and relink. Track an “explicitly unlinked” pair
+   until connectivity actually changes.
 
-- `75a0c64a9` pairing rule ("newest connection wins" in a single-tick
-  multi-connect) is still heuristic; confirm against dense factory clusters.
-- The pre-existing suite failures listed in `testnotes.md` still stand.
+Verify with `tests/core/executions/RailroadLinkExecution.test.ts`,
+`RailroadLinkCheckpoint.test.ts`, plus the new call-count/perf guard.
+
+## 4. Open items / next steps
+
+- Decide the ship target: this branch (`debug-pr14`) vs. the fork `main` (which
+  currently holds the revert). Restoring the feature to `origin/main` needs a
+  force-push (not done).
+- Deploy hygiene: the Fly build reports `GIT_COMMIT=unknown`; deploy with
+  `--build-arg GIT_COMMIT=$(git rev-parse --short HEAD)` so build skew is
+  detectable. Late-Sept/Oct deploy bursts (6 in ~45 min on 2026-10-01) are the
+  likely trigger for the stale-chunk failures now mitigated by §2.
+- Performance work §3 is outlined, **not implemented**.
+- The pre-existing suite failures in `testnotes.md` still stand.

@@ -1,3 +1,5 @@
+// Must be imported first: registers the vite:preloadError recovery before any
+// module that could start a lazy chunk import.
 import version from "resources/version.txt?raw";
 import { ClientEnv } from "src/client/ClientEnv";
 import { isTemporaryUsername, UserMeResponse } from "../core/ApiSchemas";
@@ -76,6 +78,7 @@ import { initNavigation } from "./Navigation";
 import "./NewsModal";
 import { fallbackPlayerName } from "./PlayerName";
 import "./PlayerProfileModal";
+import "./PreloadErrorRecovery";
 import { RewardsModal } from "./RewardsModal";
 import "./SavesModal";
 import "./SinglePlayerModal";

@@ -221,8 +221,25 @@ app.get("/api/health", (_req, res) => {
   }
 });
 
+// Asset URLs are content-hashed and served immutable, so a miss means the
+// caller is referencing a chunk this build no longer contains (typically a
+// stale cached app shell from a previous deploy). These must 404 rather than
+// fall through to the app shell: an HTML 200 in place of a JS module makes the
+// browser reject a dynamic import with "Failed to fetch dynamically imported
+// module" and hides the real cause, and it can be cached as if it were the
+// asset. See the client-side recovery in PreloadErrorRecovery.ts.
+const ASSET_PATH_PREFIXES = ["/assets/", "/_assets/"];
+
+function isAssetRequest(pathname: string): boolean {
+  return ASSET_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
 // SPA fallback route
-app.get("/{*splat}", async function (_req, res) {
+app.get("/{*splat}", async function (req, res) {
+  if (isAssetRequest(req.path)) {
+    res.status(404).type("text/plain").send("Asset not found");
+    return;
+  }
   try {
     const htmlPath = path.join(__dirname, "../../static/index.html");
     await renderAppShell(res, htmlPath);
