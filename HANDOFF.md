@@ -63,6 +63,13 @@ registration and rotated on use.
 
 ## 4. Open items
 
+- **PR #42** (`https://github.com/NorrasOFF/NorraRealFront/pull/42`) is open:
+  `hexfront-dev:password-reset` → `NorrasOFF:main`, two commits
+  (`3002b85c0`, `19b37c595`) cherry-picked onto the then-current upstream main.
+  It is mergeable; the only check is a pending "review". The PR was created
+  with the token in `H:\Documents\Norrasoff-token.txt` — the original
+  `Hexfront-token.txt` lacks the fine-grained "Pull requests: write"
+  permission.
 - **Deploy** `NorrasOFF/NorraRealFront` `main` (this feature plus the previous
   metadata-only checkpoint validation and health check). Nothing is live yet.
 - After deploy, do one real reset in production and confirm
