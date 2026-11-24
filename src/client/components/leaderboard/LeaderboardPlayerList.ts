@@ -20,6 +20,17 @@ const toPlayerEntry = (
 /** Only the top players are shown on the ranked leaderboard. */
 const TOP_PLAYER_LIMIT = 5;
 
+/**
+ * How long an already-loaded ladder is served before a reopen refetches it.
+ * The modal lives for the whole page session, so without this a player who
+ * opened the board before a game kept the pre-game rows after it (the game is
+ * played in the same document, and only a full reload recreated the element).
+ * Short enough that a finished match shows the next time the board is opened;
+ * long enough to collapse the open/tab-enter pair and repeated toggling into a
+ * single request.
+ */
+const REFRESH_INTERVAL_MS = 15_000;
+
 @customElement("leaderboard-player-list")
 export class LeaderboardPlayerList extends LitElement {
   @state() private entries: PlayerLeaderboardEntry[] = [];
@@ -35,6 +46,8 @@ export class LeaderboardPlayerList extends LitElement {
   private currentPage = 1;
   private currentUserId: string | null = null;
   private currentUserIdLoaded = false;
+  private lastLoadedAt = 0;
+  private refreshing = false;
 
   @query(".scroll-container") private scrollContainer?: HTMLElement;
 
@@ -59,6 +72,59 @@ export class LeaderboardPlayerList extends LitElement {
   public async ensureLoaded() {
     if (this.hasLoadedPlayers || this.isLoading) return;
     await this.loadPlayerLeaderboard(true);
+  }
+
+  /**
+   * Refresh the ladder when the modal is opened, so a match that finished
+   * while this page session was running is reflected without a reload. The
+   * visible rows stay up while the request is in flight (no spinner, no
+   * clearing); a failed refresh is non-fatal and keeps the previous rows.
+   */
+  public async refreshIfStale() {
+    if (!this.hasLoadedPlayers) {
+      await this.ensureLoaded();
+      return;
+    }
+    if (Date.now() - this.lastLoadedAt < REFRESH_INTERVAL_MS) return;
+    if (this.isLoading || this.isLoadingMore || this.refreshing) return;
+
+    // The modal calls this from both onOpen and onTabEnter, so one open can
+    // reach here twice before the first request resolves.
+    this.refreshing = true;
+    try {
+      const result = await fetchPlayerLeaderboard(1);
+      if (result === false || result === "reached_limit") return;
+
+      const existingIds = new Set<string>();
+      const nextPlayers = result
+        .filter((entry) => isVerifiedUsername(entry.accountUsername))
+        .map(toPlayerEntry)
+        .filter((player) => {
+          if (existingIds.has(player.playerId)) return false;
+          existingIds.add(player.playerId);
+          return true;
+        })
+        .slice(0, TOP_PLAYER_LIMIT);
+
+      this.entries = nextPlayers;
+      this.userEntry =
+        nextPlayers.find((player) => player.playerId === this.currentUserId) ??
+        null;
+      this.hasMore =
+        nextPlayers.length < TOP_PLAYER_LIMIT &&
+        result.length >= this.playerPageSize;
+      if (result.length > 0) {
+        this.currentPage = 2;
+      }
+      this.lastLoadedAt = Date.now();
+      this.scheduleStickyVisibilityCheck();
+    } catch (err) {
+      // Keep the rows already on screen: a transient failure on a background
+      // refresh must not replace a working ladder with the error state.
+      console.warn("refreshIfStale: request failed", err);
+    } finally {
+      this.refreshing = false;
+    }
   }
 
   public async loadPlayerLeaderboard(reset = false) {
@@ -131,6 +197,7 @@ export class LeaderboardPlayerList extends LitElement {
       }
 
       this.hasLoadedPlayers = true;
+      this.lastLoadedAt = Date.now();
       this.scheduleStickyVisibilityCheck();
       this.schedulePlayerFillCheck();
     } catch (err) {

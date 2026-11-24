@@ -139,6 +139,7 @@ describe("LeaderboardModal", () => {
   const getPlayerList = () =>
     modal.querySelector("leaderboard-player-list") as {
       loadPlayerLeaderboard: (reset?: boolean) => Promise<void>;
+      refreshIfStale: () => Promise<void>;
       updateComplete: Promise<unknown>;
       playerData: Array<Record<string, unknown>>;
       currentUserEntry?: { playerId: string } | null;
@@ -410,6 +411,112 @@ describe("LeaderboardModal", () => {
       await playerList.updateComplete;
 
       expect(modal.textContent).toContain("Try Again");
+    });
+  });
+
+  // A ranked match can finish while this page session runs. The modal element
+  // lives for the whole session, so it has to refetch when reopened; without
+  // this the board kept showing the pre-game rows until a full page reload.
+  describe("Refresh on open", () => {
+    const row = (rank: number, publicId: string) => ({
+      rank,
+      total: 1,
+      public_id: publicId,
+      accountUsername: publicId,
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("refetches a loaded ladder once the refresh window has passed", async () => {
+      const now = vi.spyOn(Date, "now");
+      now.mockReturnValue(1_000_000);
+      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+      fetchMock.mockResolvedValueOnce(
+        jsonRes([row(1, "player-1"), row(2, "player-2")]),
+      );
+
+      const playerList = getPlayerList()!;
+      await playerList.loadPlayerLeaderboard(true);
+      await playerList.updateComplete;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // Reopening inside the window does not hit the API again.
+      await playerList.refreshIfStale();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // A match finished after the board was loaded: the next open refetches
+      // and swaps the rows in place.
+      now.mockReturnValue(1_000_000 + 60_000);
+      fetchMock.mockResolvedValueOnce(
+        jsonRes([row(1, "player-9"), row(2, "player-1")]),
+      );
+      const refreshing = playerList.refreshIfStale();
+      expect(playerList.playerData.map((player) => player.playerId)).toEqual([
+        "player-1",
+        "player-2",
+      ]);
+      await refreshing;
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(playerList.playerData.map((player) => player.playerId)).toEqual([
+        "player-9",
+        "player-1",
+      ]);
+    });
+
+    it("keeps the visible rows when a background refresh fails", async () => {
+      const now = vi.spyOn(Date, "now");
+      now.mockReturnValue(1_000_000);
+      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+      fetchMock.mockResolvedValueOnce(jsonRes([row(1, "player-1")]));
+
+      const playerList = getPlayerList()!;
+      await playerList.loadPlayerLeaderboard(true);
+      await playerList.updateComplete;
+
+      now.mockReturnValue(1_000_000 + 60_000);
+      fetchMock.mockResolvedValueOnce(jsonRes({}, false, 500));
+      await playerList.refreshIfStale();
+      await playerList.updateComplete;
+
+      expect(playerList.playerData.map((player) => player.playerId)).toEqual([
+        "player-1",
+      ]);
+      expect(modal.textContent).not.toContain("Try Again");
+    });
+
+    it("collapses the open and tab-enter refreshes into one request", async () => {
+      const now = vi.spyOn(Date, "now");
+      now.mockReturnValue(1_000_000);
+      const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+      fetchMock.mockResolvedValueOnce(jsonRes([row(1, "player-1")]));
+
+      const playerList = getPlayerList()!;
+      await playerList.loadPlayerLeaderboard(true);
+      await playerList.updateComplete;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(1_000_000 + 60_000);
+      fetchMock.mockResolvedValueOnce(jsonRes([row(1, "player-2")]));
+      // BaseModal fires onOpen and onTabEnter for one open.
+      await Promise.all([
+        playerList.refreshIfStale(),
+        playerList.refreshIfStale(),
+      ]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("refreshes when the modal is opened", async () => {
+      const playerList = getPlayerList()!;
+      const refresh = vi.fn(async () => {});
+      playerList.refreshIfStale = refresh;
+
+      modal.open({ tab: "players" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(refresh).toHaveBeenCalled();
     });
   });
 

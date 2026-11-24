@@ -37,7 +37,7 @@ export class LeaderboardModal extends BaseModal {
       if (!this.playerList) {
         await this.updateComplete;
       }
-      await this.playerList?.ensureLoaded();
+      await this.playerList?.refreshIfStale();
       this.playerList?.handleTabActivated();
     })();
   }
