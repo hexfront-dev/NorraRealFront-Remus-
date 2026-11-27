@@ -1,93 +1,121 @@
-# Handoff — verified-name topplist, no Elo in the ladder payload
+# Handoff — ranked leaderboard refresh-on-open (Nine Islands result was recorded)
 
 > Future sessions: this file holds the current handoff. Overwrite it rather than
 > appending; keep only the latest handoff. Write one only when the session leaves
 > open items or partially verified work.
 
-Companion notes: `testnotes.md`, section "Topplist shows verified account names
-only, and publishes no Elo".
+Companion notes: `testnotes.md`. This session has no new `testnotes.md` section
+yet; the points worth keeping are below.
 
 ## 1. Where things are
 
 - Repo: `C:\Users\ai51940\OpenFrontIO`, branch `defense-post-priority`.
-- Token `H:\Documents\Hexfront-token.txt` authenticates as **`hexfront-dev`**.
+- Token `H:\Documents\Hexfront-token.txt` authenticates as **`hexfront-dev`**
+  (fine-grained; it can push `hexfront-dev/NorraRealFront-Remus-` but **403s**
+  on `NorrasOFF/NorraRealFront`).
 - Ship target: `origin` = `hexfront-dev/NorraRealFront-Remus-`, branch `main`
   (`git push origin HEAD:main`; use a credential-in-URL remote because the
   credential-manager prompts fail in this shell).
-- This session's work is merged into `NorrasOFF/NorraRealFront` `main`
-  (cherry-picked there, so the hashes differ): "List verified names only on the
-  topplist and drop its rating fields", the games-count move to the player
-  profile, and the handoff notes. On this branch they are `4771404b7`,
-  `e0df0e635`, `a63ab39fa` and `34d28ef09`.
-- Live app: Fly app `openfrontio`, built from `NorrasOFF/NorraRealFront` `main`
-  — **nothing from this session is live**. PR #42 is already merged there
-  (`ae2a0ac6d`).
+- Fix commit: `9d6b28563` "Refresh the ranked leaderboard when the modal is
+  reopened" — pushed to `origin/main` (now `9d6b28563`).
+- Live app: Fly app `openfrontio`, still **release v198 (Nov 17 2026 11:30)**.
+  The fix is **not live**. Runtime content of this branch equals
+  `NorrasOFF/NorraRealFront` `main` except for `HANDOFF.md` and
+  `.github/PULL_REQUEST_TEMPLATE.md` (both non-runtime), so deploying from a
+  `norrasoff/main` checkout with this commit cherry-picked is equivalent.
 
-## 2. What landed
+## 2. What was reported and what actually happened
 
-1. **Topplist = verified names only.** `verifiedAccountName()` in
-   `src/core/ApiSchemas.ts` is the single blue-check rule (premium/indefinite
-   bare name, not `TEMPORARY####`); the client badge delegates to it.
-   `GameServer.captureRankedRoster` stores `verifiedName` only when the
-   join-time badge vouched for that exact name; `PlayerRating.verifiedName` is
-   optional in the file schema (no version bump). `leaderboard()` hides entries
-   without a verified name but keeps their Elo and **true ladder rank**; the
-   client filters too. `backfillVerifiedNames()` (memoised in
-   `registerRankedRoutes`, local-auth only) labels legacy entries with the
-   account username so the board does not look reset.
-2. **No Elo on the topplist data path.** `RankedLeaderboardEntrySchema` publishes
-   `rank`, `total`, `public_id`, `accountUsername` only (the client row keeps
-   rank/player); the hidden `PlayerRating.elo`/`peakElo` still rank and balance
-   the ladder. `3bc9b4384` had already removed the visible column.
-3. **Games count moved to the profile.** The game topplist is Rank / Player
-   only. `GET /api/player/:publicId/ranked` (`{ games }`) feeds a "Ranked games
-   played" card on `PlayerProfileModal`; unknown players read 0 and the card is
-   hidden when the route is unavailable. `total` stays in the leaderboard
-   payload because the website's Topplista still shows "Matcher".
+Report: "played a ranked lobby on Nine Islands yesterday, results did not show on
+the leaderboard, nobody got any points; the website is updated but not the game
+leaderboard."
 
-No rankings were reset; `ranked-ratings.json` keeps its `version: 1` files.
+Findings on the live deployment (read-only checks):
 
-## 3. Verification
+- The saved lobby is `y6AwGVkg` — label `Nine Islands · Remus`, 9 players,
+  `ranked: true`, FFA, nations default, 49 275 turns, last saved 2026-11-23
+  16:19, rated at **17:17** the same day.
+- `/data/auth/ranked-ratings.json` has `appliedMatches: ["U5ZyD2u7",
+"y6AwGVkg"]`; all nine participants have a bumped `games`/`updatedAt`
+  (17:17). **No points were missing and no manual entry is needed.**
+- All nine were rated. Nine Islands placements/awards (award = 100 − 5·(place−1)):
 
-- `npx tsc --noEmit`, `npm run lint`, Prettier clean.
-- `tests/server`: 803 passed; only the three documented pre-existing failures
-  (`GameServerPhase`, `GameServerWire` golden, `HostedLobbyListing`).
-- Targeted: `RankedRatings`, `RankedLobby`, `RankedPlayerStatsRoute`,
-  `ApiSchemas`, `LeaderboardModal`, `ApiPlayerLeaderboard`,
-  `PlayerProfileModal`, `PlayerName`, `EnJsonSorted` pass.
-  `TranslationSystem` fails only on its four documented unused keys.
-- Not browser-tested: the modal changes are covered by component tests; the
-  single-player e2e harness cannot set up a ranked lobby.
+  | place | player (account)                  | award | pre → post |
+  | ----: | --------------------------------- | ----: | ---------: |
+  |     1 | Monstergroda                      |   100 |   95 → 195 |
+  |     2 | adrian1 (joined as Lampskene)     |    95 |   90 → 185 |
+  |     3 | ali_ce                            |    90 |     0 → 90 |
+  |     4 | Remus (joined as Tage Trampolin)  |    85 |  100 → 185 |
+  |     5 | TheBohmenienEmpire                |    80 |   80 → 160 |
+  |     6 | ooo (joined as Vackrajoel)        |    75 |     0 → 75 |
+  |     7 | BonansFall (joined as BönansFall) |    70 |     0 → 70 |
+  |     8 | bing chilling                     |    65 |     0 → 65 |
+  |     9 | Type shyte                        |    60 |     0 → 60 |
+
+  (`GabeeGaboo`/Erling Haaland did not play; they stay at 85 from `U5ZyD2u7`.)
+  The pre-game ladder was the five `U5ZyD2u7` players, so the in-game top-five
+  after the game is mostly the same names in a slightly different order — which
+  is why it looked unchanged when no point values are shown.
+
+- Root cause of "not the game leaderboard": the `leaderboard-modal` element is
+  static in `index.html` and lives for the whole page session. `ensureLoaded()`
+  early-returned once `hasLoadedPlayers` was set, so a board opened before the
+  match never refetched after it; only a full reload did. The website fetches
+  `/api/leaderboard/ranked` on every page load, which is why it was current.
+  Reproduced in headless Chrome against the live site: two opens produced **one**
+  request and identical rows.
+
+## 3. What landed (commit `9d6b28563`)
+
+- `LeaderboardPlayerList.refreshIfStale()`: after `REFRESH_INTERVAL_MS` (15 s) it
+  fetches page 1 again and swaps the rows in place. The old rows stay visible
+  while the request runs, and a failed refresh keeps them (no error screen).
+  A `refreshing` guard collapses the `onOpen` + `onTabEnter` pair (and rapid
+  toggling) into one request. Page-1-only is sufficient: `TOP_PLAYER_LIMIT = 5`
+  and the page size is 50, so the visible rows never come from page 2.
+- `LeaderboardModal` calls `refreshIfStale()` on open/tab enter instead of
+  `ensureLoaded()`.
+- `en.json`: `leaderboard_modal.refresh_time` is now "Updates when opened" (it
+  previously claimed "Refreshed every 1 hour", which was false).
+- Tests: `tests/client/LeaderboardModal.test.ts` gained "Refresh on open"
+  (refetch after the window with in-place swap, no refetch inside it, failed
+  refresh keeps rows, open/tab-enter collapse, modal open wiring). 20 tests in
+  that file pass.
+
+Verification: `npx tsc --noEmit`, `npm run lint`, Prettier clean;
+`EnJsonSorted` + `LeaderboardModal` (20 tests) pass. Headless Chrome on a local
+dev server: first open 1 request, immediate reopen still 1, reopen after 16 s
+refetches (the dedupe guard was added after that run and is covered by the unit
+test).
+
+Deliberate design that was **not** changed: the ladder publishes no Elo
+(`RankedLeaderboardEntrySchema` has rank/total/public_id/accountUsername), the
+in-game list is capped at the verified top 5, and players outside the top 5 are
+not pinned. Point values remain hidden by an earlier session's decision.
 
 ## 4. Open items
 
-- **Deploy** `NorrasOFF/NorraRealFront` `main` (now contains this work, plus the
-  metadata-only checkpoint validation and health check). Nothing is live yet.
-  The ladder hides unverified names immediately, so a deploy with no
-  `verifiedName` data relies on the local-auth backfill to keep the board
-  populated. The profile's "ranked games played" stat needs
-  `GET /api/player/:publicId/ranked` from the same deploy; against an older
-  server the card is simply hidden.
-- After deploy: run one ranked game, confirm the topplist shows account names
-  only and the player profile shows "Ranked games played", and confirm
-  `accepted host checkpoint` still follows a large chunked upload.
-- **Website** (`NorrasOFF/norrasoff.github.io`): there is nothing to change.
-  Its Topplista renders Placering / Spelare / Matcher from the API's `rank`,
-  `accountUsername`, `total` (checked in `layouts/topplista.html` and the live
-  page); the rating was never in the template. The games column stays on the
-  website only. The build workflow fetches `/api/leaderboard/ranked` into
-  `data/leaderboard.json` at build time (not committed). If Elo is still seen
-  on a page, it is a cached old build.
-- Website pushes need `H:\Documents\Norrasoff-token.txt` for PRs (the
-  `Hexfront-token.txt` can push branches but not open PRs).
+- **Deploy** (nothing live). Either cherry-pick `9d6b28563` onto
+  `NorrasOFF/NorraRealFront` `main` and run `flyctl deploy` from that checkout,
+  or ask the owner to. A deploy restarts the machine and drops games in
+  progress, so it was not done unilaterally. `FLY_API_TOKEN` is available in
+  `H:\Documents\fly-token.txt`; the Fly account is `mmrsjacobsson@gmail.com`.
+- **Points visibility**: if the owner wants the awarded numbers visible again,
+  that is a product change (server payload + leaderboard column) and was left
+  alone. The per-player totals are in section 2.
+- Until the deploy, the workaround for a stale board is a full page reload; the
+  server data is already correct.
 
 ## 5. Operational caveats (carried forward)
 
-- `fly.toml` deliberately has `min_machines_running = 0`. Do not set it to 1
-  without asking the owner.
-- `AUTH_DIR` must stay on the `openfront_auth` volume (`/data/auth`). The
-  verified-name backfill reads `accounts.json` from it.
-- `LOCAL_AUTH` returns `usernameStatus: "indefinite"` for every local account,
-  so in this deployment every signed-in account counts as verified; the visible
+- `fly.toml` deliberately has `min_machines_running = 0`; the machine auto-stops.
+  Do not set it to 1 without asking the owner.
+- `AUTH_DIR` must stay on the `openfront_auth` volume (`/data/auth`);
+  `ranked-ratings.json` and `accounts.json` live there. Player saves live in
+  `/data/saves/w0`.
+- `LOCAL_AUTH` returns `usernameStatus: "indefinite"` for every local account, so
+  in this deployment every signed-in account counts as verified; the visible
   effect is account usernames replacing typed-in join names. Do not "fix" this
-  by making names unverified without checking with the owner.
+  without checking with the owner.
+- The `Hexfront-token.txt` PAT cannot push to `NorrasOFF/NorraRealFront` (403);
+  `H:\Documents\norrasoff-token.txt` is the same GitHub user with org access.
